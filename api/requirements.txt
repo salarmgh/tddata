@@ -1,0 +1,6 @@
+# API Dependencies
+# Flask REST API for Trading Data
+
+flask>=3.0.0
+flask-cors>=4.0.0
+

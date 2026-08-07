@@ -1,0 +1,9 @@
+# Project Dependencies
+# Install all dependencies for both crawler and API
+
+# Crawler dependencies
+-r crawler/requirements.txt
+
+# API dependencies
+-r api/requirements.txt
+

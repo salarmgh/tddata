@@ -1,0 +1,8 @@
+# Crawler Dependencies
+# Telegram Web Crawler using Playwright
+
+playwright>=1.40.0
+
+# Note: After installing, run:
+#   playwright install chromium
+
