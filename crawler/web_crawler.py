@@ -857,7 +857,7 @@ async def main():
             crawler.save_to_database(messages, channel_name)
             # Parse into trades so the dashboard/API can serve data immediately
             from api.parser import TradingMessageParser
-            TradingMessageParser(crawler.db_path).parse_all_messages()
+            TradingMessageParser(crawler.db_path).parse_and_store_all()
         else:
             print("\nNo messages extracted.")
             print("Make sure you navigated to the channel before pressing Enter.")
@@ -883,7 +883,7 @@ async def main():
         if messages:
             crawler.save_to_database(messages, channel)
             from api.parser import TradingMessageParser
-            TradingMessageParser(crawler.db_path).parse_all_messages()
+            TradingMessageParser(crawler.db_path).parse_and_store_all()
         else:
             print("\nNo messages extracted. Try:")
             print("  1. Run with --visible flag to see what's happening:")

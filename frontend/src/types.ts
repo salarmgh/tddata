@@ -3,16 +3,16 @@
 export interface Trade {
   id: number;
   message_id: string;
-  channel_id: number;
   channel_name: string;
   price: number;
   transaction_type: string;
   transfer_method: string;
-  delivery_time: string;
-  original_text: string;
+  delivery_time: string | null;
+  description: string | null;
+  weight: string | null;
+  weight_kg: number | null;
   timestamp: number;
   date: string;
-  crawled_at: string;
 }
 
 export interface TradesResponse {
@@ -23,8 +23,6 @@ export interface TradesResponse {
   data: Trade[];
 }
 
-// Chart data compatible with Chart.js
-// Using a flexible type that works with all chart types
 export interface ChartData {
   labels: string[];
   datasets: Array<{
@@ -33,10 +31,13 @@ export interface ChartData {
     borderColor?: string;
     backgroundColor?: string | string[];
     fill?: boolean;
-    type?: 'line' | 'bar' | 'pie';
+    type?: "line" | "bar" | "pie";
     yAxisID?: string;
-    [key: string]: any; // Allow additional properties
+    [key: string]: any;
   }>;
+  volume?: number[];
+  weight_kg?: number[];
+  trade_counts?: number[];
 }
 
 export interface ChartResponse {
@@ -47,9 +48,11 @@ export interface ChartResponse {
 
 export interface Stats {
   total_trades: number;
+  total_weight_kg: number;
   transaction_types: Array<{ type: string; count: number }>;
   transfer_methods: Array<{ method: string; count: number }>;
   delivery_times: Array<{ time: string; count: number }>;
+  weights: Array<{ weight: string; count: number; total_kg: number }>;
 }
 
 export interface StatsResponse {
@@ -59,10 +62,12 @@ export interface StatsResponse {
 
 export interface Filters {
   days: number;
+  startDatetime: string;
+  endDatetime: string;
   transactionType: string;
   transferMethod: string;
   deliveryTime: string;
+  weight: string;
   minPrice: string;
   maxPrice: string;
 }
-

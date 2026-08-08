@@ -15,10 +15,9 @@ import {
 import { Line, Pie, Bar } from "react-chartjs-2";
 import { ChartData as ChartJSChartData } from "chart.js";
 import { apiService } from "../api";
-import { Filters, ChartData, Stats } from "../types";
+import { Filters, ChartData, Stats, Trade } from "../types";
 import FilterPanel from "./FilterPanel";
 
-// Register Chart.js components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -35,14 +34,18 @@ ChartJS.register(
 const Dashboard: React.FC = () => {
   const [filters, setFilters] = useState<Filters>({
     days: 1,
+    startDatetime: "",
+    endDatetime: "",
     transactionType: "",
     transferMethod: "",
     deliveryTime: "",
+    weight: "",
     minPrice: "",
     maxPrice: "",
   });
 
   const [stats, setStats] = useState<Stats | null>(null);
+  const [trades, setTrades] = useState<Trade[]>([]);
   const [priceTrend, setPriceTrend] = useState<ChartData | null>(null);
   const [transactionDist, setTransactionDist] = useState<ChartData | null>(
     null
@@ -53,12 +56,9 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Helper function to format time labels to hh:mm
   const formatTimeLabels = (labels: string[]): string[] => {
     return labels.map((label) => {
-      // If label contains time (format: "YYYY-MM-DD HH:MM" or "HH:MM")
       if (label.includes(":")) {
-        // Extract time part (HH:MM)
         const timeMatch = label.match(/(\d{2}:\d{2})/);
         if (timeMatch) {
           return timeMatch[1];
@@ -73,39 +73,30 @@ const Dashboard: React.FC = () => {
     setError(null);
 
     try {
-      // Fetch stats
-      const statsRes = await apiService.getStats();
+      const [statsRes, tradesRes, priceTrendRes, transactionDistRes, transferDistRes, buySellCompRes, volumeByHourRes] =
+        await Promise.all([
+          apiService.getStats(),
+          apiService.getTrades(filters, 50),
+          apiService.charts.priceTrend(filters),
+          apiService.charts.transactionDistribution(filters),
+          apiService.charts.transferDistribution(filters),
+          apiService.charts.buySellComparison(filters),
+          apiService.charts.volumeByHour(filters),
+        ]);
+
       setStats(statsRes.data);
+      setTrades(tradesRes.data || []);
 
-      // Fetch all charts
-      const [
-        priceTrendRes,
-        transactionDistRes,
-        transferDistRes,
-        buySellCompRes,
-        volumeByHourRes,
-      ] = await Promise.all([
-        apiService.charts.priceTrend(filters),
-        apiService.charts.transactionDistribution(filters.days),
-        apiService.charts.transferDistribution(filters.days),
-        apiService.charts.buySellComparison(filters.days),
-        apiService.charts.volumeByHour(filters.days),
-      ]);
-
-      // Format price trend labels to show only hh:mm
-      const formattedPriceTrend = {
+      setPriceTrend({
         ...priceTrendRes.data,
         labels: formatTimeLabels(priceTrendRes.data.labels),
-      };
-      // Format buy/sell comparison labels to show only hh:mm
-      const formattedBuySellComp = {
-        ...buySellCompRes.data,
-        labels: formatTimeLabels(buySellCompRes.data.labels),
-      };
-      setPriceTrend(formattedPriceTrend);
+      });
       setTransactionDist(transactionDistRes.data);
       setTransferDist(transferDistRes.data);
-      setBuySellComp(formattedBuySellComp);
+      setBuySellComp({
+        ...buySellCompRes.data,
+        labels: formatTimeLabels(buySellCompRes.data.labels),
+      });
       setVolumeByHour(volumeByHourRes.data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch data");
@@ -122,7 +113,7 @@ const Dashboard: React.FC = () => {
   return (
     <div className="dashboard">
       <header className="dashboard-header">
-        <h1>📊 Trading Data Dashboard</h1>
+        <h1>Trading Data Dashboard</h1>
         <p>Real-time trading analytics and insights</p>
       </header>
 
@@ -136,6 +127,28 @@ const Dashboard: React.FC = () => {
           <div className="stat-card">
             <h3>Total Trades</h3>
             <p className="stat-value">{stats.total_trades.toLocaleString()}</p>
+            <p className="stat-subvalue">
+              {(stats.total_weight_kg || 0).toLocaleString()} kg total
+            </p>
+          </div>
+
+          <div className="stat-card">
+            <h3>Weights</h3>
+            <div className="stat-list">
+              {(stats.weights || []).slice(0, 5).map((item) => (
+                <div key={item.weight} className="stat-item">
+                  <span>{item.weight}</span>
+                  <strong>
+                    {item.count} / {item.total_kg}kg
+                  </strong>
+                </div>
+              ))}
+              {(!stats.weights || stats.weights.length === 0) && (
+                <div className="stat-item">
+                  <span>No weights parsed yet</span>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="stat-card">
@@ -156,18 +169,6 @@ const Dashboard: React.FC = () => {
               {stats.transfer_methods.map((item) => (
                 <div key={item.method} className="stat-item">
                   <span>{item.method || "Unknown"}</span>
-                  <strong>{item.count}</strong>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="stat-card">
-            <h3>Delivery Times</h3>
-            <div className="stat-list">
-              {stats.delivery_times.map((item) => (
-                <div key={item.time} className="stat-item">
-                  <span>{item.time || "Unknown"}</span>
                   <strong>{item.count}</strong>
                 </div>
               ))}
@@ -258,7 +259,7 @@ const Dashboard: React.FC = () => {
           <div className="chart-card large" style={{ paddingBottom: "80px" }}>
             <h2>Volume by Hour</h2>
             <p className="chart-subtitle">
-              Trading activity throughout the day
+              Weight (kg) traded throughout the day
             </p>
             <Bar
               data={volumeByHour as ChartJSChartData<"bar", number[], string>}
@@ -277,7 +278,7 @@ const Dashboard: React.FC = () => {
                     position: "left" as const,
                     title: {
                       display: true,
-                      text: "Volume",
+                      text: "Weight (kg)",
                     },
                   },
                   y1: {
@@ -316,6 +317,40 @@ const Dashboard: React.FC = () => {
             />
           </div>
         )}
+      </div>
+
+      <div className="trades-table-card">
+        <h2>Recent Trades</h2>
+        <p className="chart-subtitle">Including parsed weight from messages</p>
+        <div className="trades-table-wrap">
+          <table className="trades-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Price</th>
+                <th>Type</th>
+                <th>Transfer</th>
+                <th>Weight</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trades.map((trade) => (
+                <tr key={trade.id}>
+                  <td>{trade.date}</td>
+                  <td>{Number(trade.price).toLocaleString()}</td>
+                  <td>{trade.transaction_type}</td>
+                  <td>{trade.transfer_method}</td>
+                  <td>{trade.weight || "—"}</td>
+                </tr>
+              ))}
+              {trades.length === 0 && (
+                <tr>
+                  <td colSpan={5}>No trades for the selected filters</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
