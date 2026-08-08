@@ -21,7 +21,7 @@ const appendFilterParams = (
     params.append("end_datetime", filters.endDatetime);
   }
   // Only use days lookback when no explicit time range is set
-  if (!filters.startDatetime && !filters.endDatetime && filters.days) {
+  if (!filters.startDatetime && !filters.endDatetime && filters.days && filters.days > 0) {
     params.append("days", filters.days.toString());
   }
   if (filters.transactionType) {
@@ -64,8 +64,10 @@ export const apiService = {
     return response.data;
   },
 
-  getStats: async (): Promise<StatsResponse> => {
-    const response = await api.get<StatsResponse>("/stats");
+  getStats: async (filters: Partial<Filters> = {}): Promise<StatsResponse> => {
+    const params = new URLSearchParams();
+    appendFilterParams(params, filters);
+    const response = await api.get<StatsResponse>(`/stats?${params}`);
     return response.data;
   },
 
@@ -94,6 +96,17 @@ export const apiService = {
       appendFilterParams(params, filters);
       const response = await api.get<ChartResponse>(
         `/chart/transaction-distribution?${params}`
+      );
+      return response.data;
+    },
+
+    weightByTransactionType: async (
+      filters: Partial<Filters>
+    ): Promise<ChartResponse> => {
+      const params = new URLSearchParams();
+      appendFilterParams(params, filters);
+      const response = await api.get<ChartResponse>(
+        `/chart/weight-by-transaction-type?${params}`
       );
       return response.data;
     },

@@ -182,9 +182,81 @@ def get_trades():
 
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
+    """Overall or filtered statistics (supports same filters as /api/trades)."""
     try:
-        stats = parser.get_stats()
-        return jsonify({"success": True, "data": stats})
+        conn = get_db()
+        cursor = conn.cursor()
+
+        base = "FROM trades WHERE 1=1"
+        params: list = []
+        filtered, params = append_common_filters(base, params)
+
+        cursor.execute(f"SELECT COUNT(*) as total_trades, COALESCE(SUM(weight_kg), 0) as total_weight_kg {filtered}", params)
+        totals = cursor.fetchone()
+
+        cursor.execute(f"""
+            SELECT transaction_type, COUNT(*) as count,
+                   COALESCE(SUM(weight_kg), 0) as total_kg
+            {filtered}
+            GROUP BY transaction_type
+            ORDER BY count DESC
+        """, params)
+        transaction_types = [
+            {"type": r["transaction_type"], "count": r["count"], "total_kg": round(r["total_kg"] or 0, 4)}
+            for r in cursor.fetchall()
+        ]
+
+        cursor.execute(f"""
+            SELECT transfer_method, COUNT(*) as count,
+                   COALESCE(SUM(weight_kg), 0) as total_kg
+            {filtered}
+            GROUP BY transfer_method
+            ORDER BY count DESC
+        """, params)
+        transfer_methods = [
+            {"method": r["transfer_method"], "count": r["count"], "total_kg": round(r["total_kg"] or 0, 4)}
+            for r in cursor.fetchall()
+        ]
+
+        cursor.execute(f"""
+            SELECT delivery_time, COUNT(*) as count,
+                   COALESCE(SUM(weight_kg), 0) as total_kg
+            {filtered}
+            AND delivery_time IS NOT NULL
+            GROUP BY delivery_time
+            ORDER BY count DESC
+        """, params)
+        delivery_times = [
+            {"time": r["delivery_time"], "count": r["count"], "total_kg": round(r["total_kg"] or 0, 4)}
+            for r in cursor.fetchall()
+        ]
+
+        cursor.execute(f"""
+            SELECT weight, COUNT(*) as count, COALESCE(SUM(weight_kg), 0) as total_kg
+            {filtered}
+            AND weight IS NOT NULL
+            GROUP BY weight
+            ORDER BY count DESC
+            LIMIT 20
+        """, params)
+        weights = [
+            {"weight": r["weight"], "count": r["count"], "total_kg": round(r["total_kg"] or 0, 4)}
+            for r in cursor.fetchall()
+        ]
+
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "total_trades": totals["total_trades"] or 0,
+                "total_weight_kg": round(totals["total_weight_kg"] or 0, 4),
+                "transaction_types": transaction_types,
+                "transfer_methods": transfer_methods,
+                "delivery_times": delivery_times,
+                "weights": weights,
+            },
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -339,6 +411,73 @@ def transaction_distribution():
                     "data": data,
                     "backgroundColor": background_colors,
                 }],
+            },
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/chart/weight-by-transaction-type", methods=["GET"])
+def weight_by_transaction_type():
+    """Total weight (kg) grouped by transaction type."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+
+        query = """
+            SELECT transaction_type,
+                   COUNT(*) as count,
+                   COALESCE(SUM(weight_kg), 0) as total_weight_kg
+            FROM trades
+            WHERE 1=1
+        """
+        params = []
+        query, params = append_common_filters(query, params)
+        query += " GROUP BY transaction_type ORDER BY total_weight_kg DESC"
+
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        conn.close()
+
+        colors = {
+            "خرید": "rgba(54, 162, 235, 0.8)",
+            "فروش": "rgba(255, 99, 132, 0.8)",
+            "معامله": "rgba(75, 192, 192, 0.8)",
+            "نامشخص": "rgba(201, 203, 207, 0.8)",
+        }
+        border_colors = {
+            "خرید": "rgb(54, 162, 235)",
+            "فروش": "rgb(255, 99, 132)",
+            "معامله": "rgb(75, 192, 192)",
+            "نامشخص": "rgb(201, 203, 207)",
+        }
+
+        labels = []
+        weights = []
+        counts = []
+        background_colors = []
+        borders = []
+        for row in results:
+            labels.append(row["transaction_type"])
+            weights.append(round(row["total_weight_kg"] or 0, 4))
+            counts.append(row["count"])
+            background_colors.append(colors.get(row["transaction_type"], "rgba(201, 203, 207, 0.8)"))
+            borders.append(border_colors.get(row["transaction_type"], "rgb(201, 203, 207)"))
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "Weight (kg)",
+                        "data": weights,
+                        "backgroundColor": background_colors,
+                        "borderColor": borders,
+                        "borderWidth": 1,
+                    }
+                ],
+                "trade_counts": counts,
             },
         })
     except Exception as e:
@@ -577,6 +716,7 @@ if __name__ == "__main__":
     print("  GET  /api/filters/weights")
     print("  GET  /api/chart/price-trend")
     print("  GET  /api/chart/transaction-distribution")
+    print("  GET  /api/chart/weight-by-transaction-type")
     print("  GET  /api/chart/transfer-distribution")
     print("  GET  /api/chart/volume-by-hour")
     print("  GET  /api/chart/price-range")

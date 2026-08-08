@@ -33,7 +33,7 @@ ChartJS.register(
 
 const Dashboard: React.FC = () => {
   const [filters, setFilters] = useState<Filters>({
-    days: 1,
+    days: 0, // 0 = all time (data may be older than 1 day)
     startDatetime: "",
     endDatetime: "",
     transactionType: "",
@@ -51,6 +51,7 @@ const Dashboard: React.FC = () => {
     null
   );
   const [transferDist, setTransferDist] = useState<ChartData | null>(null);
+  const [weightByType, setWeightByType] = useState<ChartData | null>(null);
   const [buySellComp, setBuySellComp] = useState<ChartData | null>(null);
   const [volumeByHour, setVolumeByHour] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -73,12 +74,13 @@ const Dashboard: React.FC = () => {
     setError(null);
 
     try {
-      const [statsRes, tradesRes, priceTrendRes, transactionDistRes, transferDistRes, buySellCompRes, volumeByHourRes] =
+      const [statsRes, tradesRes, priceTrendRes, transactionDistRes, weightByTypeRes, transferDistRes, buySellCompRes, volumeByHourRes] =
         await Promise.all([
-          apiService.getStats(),
+          apiService.getStats(filters),
           apiService.getTrades(filters, 50),
           apiService.charts.priceTrend(filters),
           apiService.charts.transactionDistribution(filters),
+          apiService.charts.weightByTransactionType(filters),
           apiService.charts.transferDistribution(filters),
           apiService.charts.buySellComparison(filters),
           apiService.charts.volumeByHour(filters),
@@ -92,6 +94,7 @@ const Dashboard: React.FC = () => {
         labels: formatTimeLabels(priceTrendRes.data.labels),
       });
       setTransactionDist(transactionDistRes.data);
+      setWeightByType(weightByTypeRes.data);
       setTransferDist(transferDistRes.data);
       setBuySellComp({
         ...buySellCompRes.data,
@@ -127,9 +130,16 @@ const Dashboard: React.FC = () => {
           <div className="stat-card">
             <h3>Total Trades</h3>
             <p className="stat-value">{stats.total_trades.toLocaleString()}</p>
-            <p className="stat-subvalue">
-              {(stats.total_weight_kg || 0).toLocaleString()} kg total
+          </div>
+
+          <div className="stat-card">
+            <h3>Total Weight</h3>
+            <p className="stat-value">
+              {(stats.total_weight_kg || 0).toLocaleString(undefined, {
+                maximumFractionDigits: 2,
+              })}
             </p>
+            <p className="stat-subvalue">kg (filtered)</p>
           </div>
 
           <div className="stat-card">
@@ -255,6 +265,44 @@ const Dashboard: React.FC = () => {
           </div>
         )}
 
+        {weightByType && (
+          <div className="chart-card" style={{ paddingBottom: "80px" }}>
+            <h2>Weight by Type</h2>
+            <p className="chart-subtitle">Total kg by buy / sell / trade</p>
+            <Bar
+              data={weightByType as ChartJSChartData<"bar", number[], string>}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    display: false,
+                  },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => {
+                        const value = ctx.parsed.y ?? 0;
+                        return `${value.toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })} kg`;
+                      },
+                    },
+                  },
+                },
+                scales: {
+                  y: {
+                    beginAtZero: true,
+                    title: {
+                      display: true,
+                      text: "Weight (kg)",
+                    },
+                  },
+                },
+              }}
+            />
+          </div>
+        )}
+
         {volumeByHour && (
           <div className="chart-card large" style={{ paddingBottom: "80px" }}>
             <h2>Volume by Hour</h2>
@@ -321,7 +369,21 @@ const Dashboard: React.FC = () => {
 
       <div className="trades-table-card">
         <h2>Recent Trades</h2>
-        <p className="chart-subtitle">Including parsed weight from messages</p>
+        <p className="chart-subtitle">
+          Including parsed weight from messages
+          {stats && (
+            <>
+              {" "}
+              · Total weight:{" "}
+              <strong>
+                {(stats.total_weight_kg || 0).toLocaleString(undefined, {
+                  maximumFractionDigits: 2,
+                })}{" "}
+                kg
+              </strong>
+            </>
+          )}
+        </p>
         <div className="trades-table-wrap">
           <table className="trades-table">
             <thead>

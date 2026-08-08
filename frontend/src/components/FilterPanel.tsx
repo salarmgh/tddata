@@ -49,7 +49,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
       ...filters,
       startDatetime: "",
       endDatetime: "",
-      days: 1,
+      days: 0,
     });
   };
 
@@ -76,7 +76,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           />
         </div>
 
-        <div className="filter-group">
+          <div className="filter-group">
           <label>Quick range</label>
           <div className="quick-range-buttons">
             <button type="button" onClick={() => applyQuickRange(1)}>
@@ -89,7 +89,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
               30d
             </button>
             <button type="button" onClick={clearTimeRange}>
-              Clear
+              All
             </button>
           </div>
         </div>
