@@ -111,6 +111,17 @@ export const apiService = {
       return response.data;
     },
 
+    weightNetTimeseries: async (
+      filters: Partial<Filters>
+    ): Promise<ChartResponse> => {
+      const params = new URLSearchParams();
+      appendFilterParams(params, filters);
+      const response = await api.get<ChartResponse>(
+        `/chart/weight-net-timeseries?${params}`
+      );
+      return response.data;
+    },
+
     transferDistribution: async (
       filters: Partial<Filters>
     ): Promise<ChartResponse> => {

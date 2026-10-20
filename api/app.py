@@ -55,7 +55,13 @@ def resolve_time_bounds():
     return start, end, days
 
 
-def append_common_filters(query: str, params: list, *, include_time: bool = True) -> tuple:
+def append_common_filters(
+    query: str,
+    params: list,
+    *,
+    include_time: bool = True,
+    include_transaction_type: bool = True,
+) -> tuple:
     """Append shared trade filters from request args."""
     transaction_type = request.args.get("transaction_type")
     transfer_method = request.args.get("transfer_method")
@@ -75,7 +81,7 @@ def append_common_filters(query: str, params: list, *, include_time: bool = True
             query += " AND date <= ?"
             params.append(end)
 
-    if transaction_type:
+    if include_transaction_type and transaction_type:
         query += " AND transaction_type = ?"
         params.append(transaction_type)
 
@@ -705,6 +711,90 @@ def buy_sell_comparison():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@app.route("/api/chart/weight-net-timeseries", methods=["GET"])
+def weight_net_timeseries():
+    """Time series of net weight: buy kg − sell kg per interval."""
+    try:
+        start, end, days = resolve_time_bounds()
+        if not start and not end:
+            days = days or 1
+            start = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+
+        interval = pick_interval(start, end, days or 1, request.args.get("interval"))
+        if interval == "minute":
+            group_by = "strftime('%Y-%m-%d %H:%M', date)"
+        elif interval == "hour":
+            group_by = "strftime('%Y-%m-%d %H', date)"
+        else:
+            group_by = "DATE(date)"
+
+        conn = get_db()
+        cursor = conn.cursor()
+
+        query = f"""
+            SELECT
+                {group_by} as bucket,
+                transaction_type,
+                COALESCE(SUM(weight_kg), 0) as total_weight_kg
+            FROM trades
+            WHERE transaction_type IN ('خرید', 'فروش')
+        """
+        params = []
+        # Net chart always needs both types
+        query, params = append_common_filters(
+            query, params, include_transaction_type=False
+        )
+        query += f" GROUP BY bucket, transaction_type ORDER BY bucket"
+
+        cursor.execute(query, params)
+        results = cursor.fetchall()
+        conn.close()
+
+        buy_kg = {}
+        sell_kg = {}
+        buckets = set()
+
+        for row in results:
+            bucket = row["bucket"]
+            if not bucket:
+                continue
+            buckets.add(bucket)
+            kg = round(row["total_weight_kg"] or 0, 4)
+            if row["transaction_type"] == "خرید":
+                buy_kg[bucket] = kg
+            elif row["transaction_type"] == "فروش":
+                sell_kg[bucket] = kg
+
+        labels = sorted(buckets)
+        net = [
+            round(buy_kg.get(bucket, 0) - sell_kg.get(bucket, 0), 4)
+            for bucket in labels
+        ]
+        buy_series = [buy_kg.get(bucket, 0) for bucket in labels]
+        sell_series = [sell_kg.get(bucket, 0) for bucket in labels]
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "labels": labels,
+                "datasets": [
+                    {
+                        "label": "Buy − Sell (kg)",
+                        "data": net,
+                        "borderColor": "rgb(75, 192, 192)",
+                        "backgroundColor": "rgba(75, 192, 192, 0.2)",
+                        "fill": True,
+                        "tension": 0.2,
+                    }
+                ],
+                "buy_kg": buy_series,
+                "sell_kg": sell_series,
+            },
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("Trading Data API Server")
@@ -717,6 +807,7 @@ if __name__ == "__main__":
     print("  GET  /api/chart/price-trend")
     print("  GET  /api/chart/transaction-distribution")
     print("  GET  /api/chart/weight-by-transaction-type")
+    print("  GET  /api/chart/weight-net-timeseries")
     print("  GET  /api/chart/transfer-distribution")
     print("  GET  /api/chart/volume-by-hour")
     print("  GET  /api/chart/price-range")

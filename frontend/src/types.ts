@@ -28,8 +28,9 @@ export interface ChartData {
   datasets: Array<{
     label: string;
     data: number[];
-    borderColor?: string;
+    borderColor?: string | string[];
     backgroundColor?: string | string[];
+    borderWidth?: number;
     fill?: boolean;
     type?: "line" | "bar" | "pie";
     yAxisID?: string;

@@ -52,6 +52,7 @@ const Dashboard: React.FC = () => {
   );
   const [transferDist, setTransferDist] = useState<ChartData | null>(null);
   const [weightByType, setWeightByType] = useState<ChartData | null>(null);
+  const [weightNetTs, setWeightNetTs] = useState<ChartData | null>(null);
   const [buySellComp, setBuySellComp] = useState<ChartData | null>(null);
   const [volumeByHour, setVolumeByHour] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -69,18 +70,42 @@ const Dashboard: React.FC = () => {
     });
   };
 
+  /** Insert y=0 points wherever the series crosses zero so each segment is one sign. */
+  const splitNetAtZero = (labels: string[], values: number[]) => {
+    const outLabels: string[] = [];
+    const outValues: number[] = [];
+    const isCrossing: boolean[] = [];
+
+    values.forEach((y1, i) => {
+      if (i > 0) {
+        const y0 = values[i - 1];
+        if ((y0 > 0 && y1 < 0) || (y0 < 0 && y1 > 0)) {
+          outLabels.push("");
+          outValues.push(0);
+          isCrossing.push(true);
+        }
+      }
+      outLabels.push(labels[i]);
+      outValues.push(y1);
+      isCrossing.push(false);
+    });
+
+    return { labels: outLabels, values: outValues, isCrossing };
+  };
+
   const fetchAllData = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const [statsRes, tradesRes, priceTrendRes, transactionDistRes, weightByTypeRes, transferDistRes, buySellCompRes, volumeByHourRes] =
+      const [statsRes, tradesRes, priceTrendRes, transactionDistRes, weightByTypeRes, weightNetTsRes, transferDistRes, buySellCompRes, volumeByHourRes] =
         await Promise.all([
           apiService.getStats(filters),
           apiService.getTrades(filters, 50),
           apiService.charts.priceTrend(filters),
           apiService.charts.transactionDistribution(filters),
           apiService.charts.weightByTransactionType(filters),
+          apiService.charts.weightNetTimeseries(filters),
           apiService.charts.transferDistribution(filters),
           apiService.charts.buySellComparison(filters),
           apiService.charts.volumeByHour(filters),
@@ -95,6 +120,61 @@ const Dashboard: React.FC = () => {
       });
       setTransactionDist(transactionDistRes.data);
       setWeightByType(weightByTypeRes.data);
+      {
+        const netData = weightNetTsRes.data;
+        const rawValues = (netData.datasets?.[0]?.data || []) as number[];
+        const formatted = formatTimeLabels(netData.labels);
+        const split = splitNetAtZero(formatted, rawValues);
+        const blue = "rgb(54, 162, 235)";
+        const red = "rgb(255, 99, 132)";
+        const blueFill = "rgba(54, 162, 235, 0.15)";
+        const redFill = "rgba(255, 99, 132, 0.15)";
+        // After zero-split, a segment is positive iff it isn't entirely on/below zero
+        const segmentPositive = (
+          y0: number,
+          y1: number
+        ) => y0 > 0 || y1 > 0 || (y0 === 0 && y1 === 0);
+
+        setWeightNetTs({
+          ...netData,
+          labels: split.labels,
+          datasets: [
+            {
+              ...netData.datasets[0],
+              label: "Buy − Sell (kg)",
+              data: split.values,
+              borderColor: blue,
+              backgroundColor: blueFill,
+              fill: true,
+              tension: 0, // curves would cross zero away from the split point
+              pointRadius: split.isCrossing.map((c) => (c ? 0 : 3)),
+              pointHoverRadius: split.isCrossing.map((c) => (c ? 0 : 4)),
+              pointBackgroundColor: split.values.map((v) =>
+                v >= 0 ? blue : red
+              ),
+              pointBorderColor: split.values.map((v) => (v >= 0 ? blue : red)),
+              segment: {
+                borderColor: (ctx: {
+                  p0: { parsed: { y: number | null } };
+                  p1: { parsed: { y: number | null } };
+                }) => {
+                  const y0 = ctx.p0.parsed.y ?? 0;
+                  const y1 = ctx.p1.parsed.y ?? 0;
+                  return segmentPositive(y0, y1) ? blue : red;
+                },
+                backgroundColor: (ctx: {
+                  p0: { parsed: { y: number | null } };
+                  p1: { parsed: { y: number | null } };
+                }) => {
+                  const y0 = ctx.p0.parsed.y ?? 0;
+                  const y1 = ctx.p1.parsed.y ?? 0;
+                  return segmentPositive(y0, y1) ? blueFill : redFill;
+                },
+              },
+            },
+          ],
+        });
+      }
       setTransferDist(transferDistRes.data);
       setBuySellComp({
         ...buySellCompRes.data,
@@ -295,6 +375,46 @@ const Dashboard: React.FC = () => {
                     title: {
                       display: true,
                       text: "Weight (kg)",
+                    },
+                  },
+                },
+              }}
+            />
+          </div>
+        )}
+
+        {weightNetTs && (
+          <div className="chart-card large" style={{ paddingBottom: "80px" }}>
+            <h2>Net Weight (Buy − Sell)</h2>
+            <p className="chart-subtitle">
+              Blue = more buy · Red = more sell
+            </p>
+            <Line
+              data={weightNetTs as ChartJSChartData<"line", number[], string>}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    position: "top" as const,
+                  },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => {
+                        const value = ctx.parsed.y ?? 0;
+                        const sign = value > 0 ? "+" : "";
+                        return `${sign}${value.toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })} kg`;
+                      },
+                    },
+                  },
+                },
+                scales: {
+                  y: {
+                    title: {
+                      display: true,
+                      text: "Buy − Sell (kg)",
                     },
                   },
                 },
