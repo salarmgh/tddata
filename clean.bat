@@ -42,7 +42,7 @@ echo.
 
 :done
 echo Next steps (optional):
-echo   1. Crawl:  .venv\Scripts\python.exe -m crawler.web_crawler crawl-manual --hours 1
+echo   1. Crawl:  .venv\Scripts\python.exe -m crawler.web_crawler crawl-manual --minutes 30
 echo   2. Parse:  .venv\Scripts\python.exe -m api.parser parse
 echo   3. Start:  start.bat
 echo.

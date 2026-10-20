@@ -14,7 +14,8 @@ Usage:
     3. Or crawl a private channel (no username) manually:
        python -m crawler.web_crawler crawl-manual
 
-    4. Crawl with scrolling (last N hours or days):
+    4. Crawl with scrolling (last N minutes, hours, or days):
+       python -m crawler.web_crawler crawl-manual --minutes 30
        python -m crawler.web_crawler crawl-manual --hours 1
        python -m crawler.web_crawler crawl-manual --days 7
 """
@@ -27,6 +28,23 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+
+def _format_lookback(minutes: float) -> str:
+    """Human-readable lookback duration for logs."""
+    total = int(round(minutes))
+    if total < 60:
+        return f"{total} minute(s)"
+    days, rem = divmod(total, 24 * 60)
+    hours, mins = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days} day(s)")
+    if hours:
+        parts.append(f"{hours} hour(s)")
+    if mins:
+        parts.append(f"{mins} minute(s)")
+    return " ".join(parts) if parts else "0 minute(s)"
 
 from playwright.async_api import async_playwright, Page, Browser
 
@@ -332,7 +350,7 @@ class TelegramWebCrawler:
     async def crawl_manual(
         self,
         output_name: str = "private_channel",
-        hours: int = 0,
+        minutes: float = 0,
         scroll_delay: float = 1.0
     ) -> tuple[list[dict], str]:
         """
@@ -341,7 +359,7 @@ class TelegramWebCrawler:
 
         Args:
             output_name: Name to use for the output file
-            hours: Number of hours to scroll back (0 = no scrolling, just visible messages)
+            minutes: Minutes to scroll back (0 = no scrolling, just visible messages)
             scroll_delay: Delay between scrolls in seconds
 
         Returns:
@@ -354,8 +372,8 @@ class TelegramWebCrawler:
         print("1. Click on the channel you want to crawl from your chat list")
         print("2. Wait for messages to load")
         print("3. Press Enter in this terminal to start extraction")
-        if hours > 0:
-            print(f"\nWill scroll back {hours} hour(s) to collect messages.\n")
+        if minutes > 0:
+            print(f"\nWill scroll back {_format_lookback(minutes)} to collect messages.\n")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch_persistent_context(
@@ -399,11 +417,11 @@ class TelegramWebCrawler:
             print(f"\nFound {len(existing_ids)} existing messages in database")
 
             # Scroll and extract messages
-            if hours > 0:
+            if minutes > 0:
                 print(
-                    f"Scrolling back {hours} hour(s) (will stop at existing messages)...")
+                    f"Scrolling back {_format_lookback(minutes)} (will stop at existing messages)...")
                 messages = await self._scroll_and_extract(
-                    page, channel_name, hours, scroll_delay
+                    page, channel_name, minutes, scroll_delay
                 )
             else:
                 print("Extracting visible messages...")
@@ -424,7 +442,7 @@ class TelegramWebCrawler:
         self,
         page: Page,
         channel_name: str,
-        hours: int,
+        minutes: float,
         scroll_delay: float = 1.5
     ) -> list[dict]:
         """
@@ -434,13 +452,13 @@ class TelegramWebCrawler:
         Args:
             page: Playwright page
             channel_name: Channel name for message metadata
-            hours: Number of hours to go back
+            minutes: Number of minutes to go back
             scroll_delay: Delay between scrolls
 
         Returns:
             List of NEW messages only (not in database)
         """
-        cutoff_timestamp = (datetime.now() - timedelta(hours=hours)).timestamp()
+        cutoff_timestamp = (datetime.now() - timedelta(minutes=minutes)).timestamp()
         print(
             f"Cutoff time: {datetime.fromtimestamp(cutoff_timestamp).strftime('%Y-%m-%d %H:%M')}")
 
@@ -801,14 +819,17 @@ async def main():
         print("  stats                      - Show database statistics")
         print("\nOptions:")
         print(
+            "  --minutes N                - Scroll back N minutes")
+        print(
             "  --hours N                  - Scroll back N hours (default: 0 = visible only)")
         print(
-            "  --days N                   - Scroll back N days (can combine with --hours)")
+            "  --days N                   - Scroll back N days (can combine with --minutes/--hours)")
         print("  --visible                  - Show browser window (for crawl command)")
         print("\nExamples:")
         print("  python -m crawler.web_crawler login")
         print("  python -m crawler.web_crawler crawl durov")
         print("  python -m crawler.web_crawler crawl-manual")
+        print("  python -m crawler.web_crawler crawl-manual --minutes 30  # Last 30 minutes")
         print("  python -m crawler.web_crawler crawl-manual --hours 1     # Last 1 hour")
         print("  python -m crawler.web_crawler crawl-manual --days 7      # Last 7 days")
         print("  python -m crawler.web_crawler crawl-manual --days 1 --hours 12")
@@ -818,11 +839,19 @@ async def main():
     command = sys.argv[1].lower()
     crawler = TelegramWebCrawler()
 
-    # Parse --hours / --days lookback arguments
+    # Parse --minutes / --hours / --days lookback arguments
+    minutes = 0
     hours = 0
     days = 0
     for i, arg in enumerate(sys.argv):
-        if arg == "--hours" and i + 1 < len(sys.argv):
+        if arg == "--minutes" and i + 1 < len(sys.argv):
+            try:
+                minutes = int(sys.argv[i + 1])
+            except ValueError:
+                print(
+                    f"Error: --minutes requires a number, got: {sys.argv[i + 1]}")
+                return
+        elif arg == "--hours" and i + 1 < len(sys.argv):
             try:
                 hours = int(sys.argv[i + 1])
             except ValueError:
@@ -837,7 +866,7 @@ async def main():
                     f"Error: --days requires a number, got: {sys.argv[i + 1]}")
                 return
 
-    lookback_hours = hours + (days * 24)
+    lookback_minutes = minutes + (hours * 60) + (days * 24 * 60)
 
     if command == "login":
         await crawler.login()
@@ -850,7 +879,9 @@ async def main():
                 output_name = arg
                 break
 
-        result = await crawler.crawl_manual(output_name=output_name, hours=lookback_hours)
+        result = await crawler.crawl_manual(
+            output_name=output_name, minutes=lookback_minutes
+        )
         messages, channel_name = result
 
         if messages:

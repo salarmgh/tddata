@@ -72,9 +72,12 @@ Only needed if you do not already have `database\telegram_data.db` with trades:
 
 ```bat
 python -m crawler.web_crawler login
+python -m crawler.web_crawler crawl-manual --minutes 30
 python -m crawler.web_crawler crawl-manual --hours 1
 python -m api.parser parse
 ```
+
+Lookback options can be combined: `--minutes`, `--hours`, `--days`.
 
 ## 3. Run both (recommended)
 
@@ -146,7 +149,7 @@ If delete fails, stop the API window first (file may be locked).
 Then reload data:
 
 ```bat
-.venv\Scripts\python.exe -m crawler.web_crawler crawl-manual --hours 1
+.venv\Scripts\python.exe -m crawler.web_crawler crawl-manual --minutes 30
 .venv\Scripts\python.exe -m api.parser parse
 start.bat
 ```
