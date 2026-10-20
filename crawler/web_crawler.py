@@ -155,10 +155,16 @@ class TelegramWebCrawler:
                        (channel_name,))
         channel_id = cursor.fetchone()[0]
 
-        # Insert messages
+        # Insert messages; refresh text on rows that were saved without body text
         inserted = 0
+        updated = 0
+        missing_text = 0
         for msg in messages:
             try:
+                text = (msg.get("text") or "").strip() or None
+                if not text:
+                    missing_text += 1
+
                 cursor.execute("""
                     INSERT OR IGNORE INTO messages (
                         message_id, channel_id, channel_name, text, timestamp,
@@ -169,7 +175,7 @@ class TelegramWebCrawler:
                     msg.get("message_id"),
                     channel_id,
                     channel_name,
-                    msg.get("text"),
+                    text,
                     msg.get("timestamp"),
                     msg.get("date"),
                     msg.get("time_display"),
@@ -181,6 +187,36 @@ class TelegramWebCrawler:
                 ))
                 if cursor.rowcount > 0:
                     inserted += 1
+                elif text:
+                    cursor.execute("""
+                        UPDATE messages
+                        SET text = ?,
+                            timestamp = COALESCE(?, timestamp),
+                            date = COALESCE(?, date),
+                            time_display = COALESCE(?, time_display),
+                            views = COALESCE(?, views),
+                            has_photo = ?,
+                            has_video = ?,
+                            has_document = ?,
+                            crawled_at = ?
+                        WHERE message_id = ?
+                          AND channel_name = ?
+                          AND (text IS NULL OR trim(text) = '')
+                    """, (
+                        text,
+                        msg.get("timestamp"),
+                        msg.get("date"),
+                        msg.get("time_display"),
+                        msg.get("views"),
+                        1 if msg.get("has_photo") else 0,
+                        1 if msg.get("has_video") else 0,
+                        1 if msg.get("has_document") else 0,
+                        msg.get("crawled_at", datetime.now().isoformat()),
+                        msg.get("message_id"),
+                        channel_name,
+                    ))
+                    if cursor.rowcount > 0:
+                        updated += 1
             except Exception as e:
                 print(f"Error inserting message {msg.get('message_id')}: {e}")
                 continue
@@ -190,8 +226,16 @@ class TelegramWebCrawler:
 
         print(
             f"\n✓ Saved {inserted} new messages to database ({self.db_path})")
-        print(f"  (Skipped {len(messages) - inserted} duplicates)")
-
+        if updated:
+            print(f"  Updated text on {updated} previously empty messages")
+        skipped = len(messages) - inserted - updated
+        if skipped > 0:
+            print(f"  (Skipped {skipped} duplicates)")
+        if missing_text:
+            print(
+                f"  [WARN] {missing_text}/{len(messages)} messages had no text "
+                "(Telegram DOM may have changed — dashboard will stay empty)"
+            )
         return inserted
 
     def get_messages(self, channel_name: str = None, limit: int = None) -> list[dict]:
@@ -268,8 +312,15 @@ class TelegramWebCrawler:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        # Only treat messages with real text as "already crawled".
+        # Rows with NULL/empty text need to be re-fetched.
         cursor.execute(
-            "SELECT message_id FROM messages WHERE channel_name = ?",
+            """
+            SELECT message_id FROM messages
+            WHERE channel_name = ?
+              AND text IS NOT NULL
+              AND trim(text) != ''
+            """,
             (channel_name,)
         )
         ids = {row[0] for row in cursor.fetchall()}
@@ -570,6 +621,45 @@ class TelegramWebCrawler:
 
         return new_messages
 
+    async def _extract_bubble_text(self, bubble) -> Optional[str]:
+        """Read message body from a bubble using several Telegram Web selectors."""
+        selectors = [
+            ".translatable-message",
+            ".text-content",
+            ".message .text-content",
+            ".message-text",
+            ".bubble-content .message",
+            ".message.spoilers-container",
+            ".message",
+        ]
+        for selector in selectors:
+            try:
+                text_elem = bubble.locator(selector)
+                if await text_elem.count() == 0:
+                    continue
+                text = (await text_elem.first.inner_text() or "").strip()
+                # Strip trailing time/views chrome that sometimes leaks into .message
+                if text:
+                    return text
+            except Exception:
+                continue
+
+        # Last resort: JS clone without time/views chrome
+        try:
+            text = await bubble.evaluate(
+                """(el) => {
+                    const root = el.querySelector('.bubble-content') || el;
+                    const clone = root.cloneNode(true);
+                    clone.querySelectorAll(
+                        '.time, .time-inner, .post-views, .message-status, .clearfix, .reactions'
+                    ).forEach((n) => n.remove());
+                    return (clone.innerText || '').replace(/\\s+/g, ' ').trim();
+                }"""
+            )
+            return text or None
+        except Exception:
+            return None
+
     async def _extract_messages_with_timestamp(self, page: Page, channel_name: str) -> list[dict]:
         """Extract messages using data-timestamp attribute for accurate dates"""
         messages = []
@@ -600,10 +690,9 @@ class TelegramWebCrawler:
                     except:
                         pass
 
-                # Get message text from .translatable-message
-                text_elem = bubble.locator(".translatable-message")
-                if await text_elem.count() > 0:
-                    msg_data["text"] = await text_elem.first.inner_text()
+                text = await self._extract_bubble_text(bubble)
+                if text:
+                    msg_data["text"] = text
 
                 # Get full time display from title attribute
                 time_elem = bubble.locator(".time-inner")
@@ -730,10 +819,9 @@ class TelegramWebCrawler:
                 if msg_id:
                     msg_data["message_id"] = msg_id
 
-                # Get message text
-                text_elem = bubble.locator(".message, .text-content")
-                if await text_elem.count() > 0:
-                    msg_data["text"] = await text_elem.first.inner_text()
+                text = await self._extract_bubble_text(bubble)
+                if text:
+                    msg_data["text"] = text
 
                 # Get timestamp
                 time_elem = bubble.locator(".time, .time-inner")
