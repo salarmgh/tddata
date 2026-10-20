@@ -191,6 +191,16 @@ class TradingMessageParser:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
+        )
+        if cursor.fetchone() is None:
+            conn.close()
+            print("No messages table found. Crawl data first, then parse.")
+            print("  .venv\\Scripts\\python.exe -m crawler.web_crawler crawl-manual --hours 1")
+            print("  .venv\\Scripts\\python.exe -m api.parser parse")
+            return 0
+
         if reparse:
             cursor.execute("""
                 SELECT m.message_id, m.channel_name, m.text, m.timestamp, m.date

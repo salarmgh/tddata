@@ -125,6 +125,38 @@ npm start
 
 Close the API/frontend windows, or press `Ctrl+C` in each.
 
+## Clean data (start fresh)
+
+Double-click `clean.bat`, or run:
+
+```bat
+clean.bat
+```
+
+It asks you to type `YES`, then deletes `database\telegram_data.db`.
+
+**Manual Command Prompt equivalent:**
+
+```bat
+del /f /q database\telegram_data.db
+```
+
+If delete fails, stop the API window first (file may be locked).
+
+Then reload data:
+
+```bat
+.venv\Scripts\python.exe -m crawler.web_crawler crawl-manual --hours 1
+.venv\Scripts\python.exe -m api.parser parse
+start.bat
+```
+
+**Clear tables only** (keep the `.db` file; needs `sqlite3` on PATH):
+
+```bat
+sqlite3 database\telegram_data.db "DELETE FROM trades; DELETE FROM messages; DELETE FROM channels; VACUUM;"
+```
+
 ## Troubleshooting
 
 ### `python` is not installed / not found (but Python is installed)
