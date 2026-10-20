@@ -121,12 +121,21 @@ npm start
 | Service  | Command (after setup)                    | URL                   |
 | -------- | ---------------------------------------- | --------------------- |
 | Both     | `start.bat`                              | ports 5000 and 3000   |
+| Stop     | `stop.bat`                               | closes API + frontend |
 | API      | `.venv\Scripts\python.exe -m api.app`    | http://localhost:5000 |
 | Frontend | `cd frontend` → `npm start`              | http://localhost:3000 |
 
 ## Stop services
 
-Close the API/frontend windows, or press `Ctrl+C` in each.
+Double-click `stop.bat`, or run:
+
+```bat
+stop.bat
+```
+
+This closes the `TalaData API` / `TalaData Frontend` windows and frees ports `5000` and `3000`.
+
+You can also close those windows manually, or press `Ctrl+C` in each.
 
 ## Clean data (start fresh)
 

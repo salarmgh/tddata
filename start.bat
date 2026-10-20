@@ -47,6 +47,6 @@ echo Frontend: http://localhost:3000
 echo API:      http://localhost:5000/api/health
 echo.
 echo Two new windows were opened for API and frontend.
-echo Close those windows or press Ctrl+C in each to stop.
+echo To stop: run stop.bat, or close those windows / Ctrl+C.
 echo.
 endlocal
