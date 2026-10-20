@@ -711,84 +711,175 @@ def buy_sell_comparison():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+def _bucket_buy_sell_weights(force_start: str = None):
+    """Shared buy/sell weight buckets for net charts."""
+    start, end, days = resolve_time_bounds()
+    if force_start:
+        start = force_start
+    if not start and not end:
+        days = days or 1
+        start = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+
+    interval = pick_interval(start, end, days or 1, request.args.get("interval"))
+    if interval == "minute":
+        group_by = "strftime('%Y-%m-%d %H:%M', date)"
+    elif interval == "hour":
+        group_by = "strftime('%Y-%m-%d %H', date)"
+    else:
+        group_by = "DATE(date)"
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    query = f"""
+        SELECT
+            {group_by} as bucket,
+            transaction_type,
+            COALESCE(SUM(weight_kg), 0) as total_weight_kg
+        FROM trades
+        WHERE transaction_type IN ('خرید', 'فروش')
+    """
+    params = []
+    if force_start:
+        query += " AND date >= ?"
+        params.append(force_start)
+        if end:
+            query += " AND date <= ?"
+            params.append(end)
+        query, params = append_common_filters(
+            query,
+            params,
+            include_time=False,
+            include_transaction_type=False,
+        )
+    else:
+        query, params = append_common_filters(
+            query, params, include_transaction_type=False
+        )
+
+    query += " GROUP BY bucket, transaction_type ORDER BY bucket"
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+    conn.close()
+
+    buy_kg = {}
+    sell_kg = {}
+    buckets = set()
+    for row in results:
+        bucket = row["bucket"]
+        if not bucket:
+            continue
+        buckets.add(bucket)
+        kg = round(row["total_weight_kg"] or 0, 4)
+        if row["transaction_type"] == "خرید":
+            buy_kg[bucket] = kg
+        elif row["transaction_type"] == "فروش":
+            sell_kg[bucket] = kg
+
+    labels = sorted(buckets)
+    net = [
+        round(buy_kg.get(bucket, 0) - sell_kg.get(bucket, 0), 4)
+        for bucket in labels
+    ]
+    return {
+        "labels": labels,
+        "net": net,
+        "buy_kg": [buy_kg.get(bucket, 0) for bucket in labels],
+        "sell_kg": [sell_kg.get(bucket, 0) for bucket in labels],
+        "start": start,
+        "end": end,
+        "interval": interval,
+    }
+
+
 @app.route("/api/chart/weight-net-timeseries", methods=["GET"])
 def weight_net_timeseries():
     """Time series of net weight: buy kg − sell kg per interval."""
     try:
-        start, end, days = resolve_time_bounds()
-        if not start and not end:
-            days = days or 1
-            start = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
-
-        interval = pick_interval(start, end, days or 1, request.args.get("interval"))
-        if interval == "minute":
-            group_by = "strftime('%Y-%m-%d %H:%M', date)"
-        elif interval == "hour":
-            group_by = "strftime('%Y-%m-%d %H', date)"
-        else:
-            group_by = "DATE(date)"
-
-        conn = get_db()
-        cursor = conn.cursor()
-
-        query = f"""
-            SELECT
-                {group_by} as bucket,
-                transaction_type,
-                COALESCE(SUM(weight_kg), 0) as total_weight_kg
-            FROM trades
-            WHERE transaction_type IN ('خرید', 'فروش')
-        """
-        params = []
-        # Net chart always needs both types
-        query, params = append_common_filters(
-            query, params, include_transaction_type=False
-        )
-        query += f" GROUP BY bucket, transaction_type ORDER BY bucket"
-
-        cursor.execute(query, params)
-        results = cursor.fetchall()
-        conn.close()
-
-        buy_kg = {}
-        sell_kg = {}
-        buckets = set()
-
-        for row in results:
-            bucket = row["bucket"]
-            if not bucket:
-                continue
-            buckets.add(bucket)
-            kg = round(row["total_weight_kg"] or 0, 4)
-            if row["transaction_type"] == "خرید":
-                buy_kg[bucket] = kg
-            elif row["transaction_type"] == "فروش":
-                sell_kg[bucket] = kg
-
-        labels = sorted(buckets)
-        net = [
-            round(buy_kg.get(bucket, 0) - sell_kg.get(bucket, 0), 4)
-            for bucket in labels
-        ]
-        buy_series = [buy_kg.get(bucket, 0) for bucket in labels]
-        sell_series = [sell_kg.get(bucket, 0) for bucket in labels]
-
+        bucketed = _bucket_buy_sell_weights()
         return jsonify({
             "success": True,
             "data": {
-                "labels": labels,
+                "labels": bucketed["labels"],
                 "datasets": [
                     {
                         "label": "Buy − Sell (kg)",
-                        "data": net,
+                        "data": bucketed["net"],
                         "borderColor": "rgb(75, 192, 192)",
                         "backgroundColor": "rgba(75, 192, 192, 0.2)",
                         "fill": True,
                         "tension": 0.2,
                     }
                 ],
-                "buy_kg": buy_series,
-                "sell_kg": sell_series,
+                "buy_kg": bucketed["buy_kg"],
+                "sell_kg": bucketed["sell_kg"],
+            },
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/chart/weight-net-cumulative", methods=["GET"])
+def weight_net_cumulative():
+    """
+    Cumulative buy − sell (kg) from a source time forward.
+    Query: source_datetime (required for a meaningful baseline; falls back to range start).
+    """
+    try:
+        source = request.args.get("source_datetime") or request.args.get("source_time")
+        source = _datetime_local_to_iso(source) if source else None
+
+        start, end, days = resolve_time_bounds()
+        if not source:
+            source = start
+        if not source:
+            # Default: earliest trade in filtered set, else last 1 day
+            conn = get_db()
+            cursor = conn.cursor()
+            q = "SELECT MIN(date) as min_date FROM trades WHERE transaction_type IN ('خرید', 'فروش')"
+            params = []
+            q, params = append_common_filters(
+                q, params, include_time=True, include_transaction_type=False
+            )
+            cursor.execute(q, params)
+            row = cursor.fetchone()
+            conn.close()
+            source = (row["min_date"] if row else None) or (
+                datetime.now() - timedelta(days=days or 1)
+            ).isoformat(timespec="seconds")
+
+        bucketed = _bucket_buy_sell_weights(force_start=source)
+        labels = bucketed["labels"]
+        net = bucketed["net"]
+
+        # Start at 0 at the source time, then accumulate period nets
+        cumulative = []
+        running = 0.0
+        out_labels = [source[:16].replace("T", " ") if "T" in source else source]
+        out_values = [0.0]
+        for label, period_net in zip(labels, net):
+            running = round(running + period_net, 4)
+            out_labels.append(label)
+            out_values.append(running)
+
+        return jsonify({
+            "success": True,
+            "data": {
+                "labels": out_labels,
+                "datasets": [
+                    {
+                        "label": "Cumulative Buy − Sell (kg)",
+                        "data": out_values,
+                        "borderColor": "rgb(54, 162, 235)",
+                        "backgroundColor": "rgba(54, 162, 235, 0.15)",
+                        "fill": True,
+                        "tension": 0,
+                    }
+                ],
+                "source_datetime": source,
+                "buy_kg": bucketed["buy_kg"],
+                "sell_kg": bucketed["sell_kg"],
+                "period_net": net,
             },
         })
     except Exception as e:
@@ -808,6 +899,7 @@ if __name__ == "__main__":
     print("  GET  /api/chart/transaction-distribution")
     print("  GET  /api/chart/weight-by-transaction-type")
     print("  GET  /api/chart/weight-net-timeseries")
+    print("  GET  /api/chart/weight-net-cumulative")
     print("  GET  /api/chart/transfer-distribution")
     print("  GET  /api/chart/volume-by-hour")
     print("  GET  /api/chart/price-range")

@@ -53,6 +53,9 @@ const Dashboard: React.FC = () => {
   const [transferDist, setTransferDist] = useState<ChartData | null>(null);
   const [weightByType, setWeightByType] = useState<ChartData | null>(null);
   const [weightNetTs, setWeightNetTs] = useState<ChartData | null>(null);
+  const [weightNetCumulative, setWeightNetCumulative] =
+    useState<ChartData | null>(null);
+  const [sourceDatetime, setSourceDatetime] = useState("");
   const [buySellComp, setBuySellComp] = useState<ChartData | null>(null);
   const [volumeByHour, setVolumeByHour] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -93,6 +96,56 @@ const Dashboard: React.FC = () => {
     return { labels: outLabels, values: outValues, isCrossing };
   };
 
+  const buildSignedNetChart = (
+    labels: string[],
+    values: number[],
+    seriesLabel: string
+  ): ChartData => {
+    const split = splitNetAtZero(labels, values);
+    const blue = "rgb(54, 162, 235)";
+    const red = "rgb(255, 99, 132)";
+    const blueFill = "rgba(54, 162, 235, 0.15)";
+    const redFill = "rgba(255, 99, 132, 0.15)";
+    const segmentPositive = (y0: number, y1: number) =>
+      y0 > 0 || y1 > 0 || (y0 === 0 && y1 === 0);
+
+    return {
+      labels: split.labels,
+      datasets: [
+        {
+          label: seriesLabel,
+          data: split.values,
+          borderColor: blue,
+          backgroundColor: blueFill,
+          fill: true,
+          tension: 0,
+          pointRadius: split.isCrossing.map((c) => (c ? 0 : 3)),
+          pointHoverRadius: split.isCrossing.map((c) => (c ? 0 : 4)),
+          pointBackgroundColor: split.values.map((v) => (v >= 0 ? blue : red)),
+          pointBorderColor: split.values.map((v) => (v >= 0 ? blue : red)),
+          segment: {
+            borderColor: (ctx: {
+              p0: { parsed: { y: number | null } };
+              p1: { parsed: { y: number | null } };
+            }) => {
+              const y0 = ctx.p0.parsed.y ?? 0;
+              const y1 = ctx.p1.parsed.y ?? 0;
+              return segmentPositive(y0, y1) ? blue : red;
+            },
+            backgroundColor: (ctx: {
+              p0: { parsed: { y: number | null } };
+              p1: { parsed: { y: number | null } };
+            }) => {
+              const y0 = ctx.p0.parsed.y ?? 0;
+              const y1 = ctx.p1.parsed.y ?? 0;
+              return segmentPositive(y0, y1) ? blueFill : redFill;
+            },
+          },
+        },
+      ],
+    };
+  };
+
   const fetchAllData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -123,57 +176,13 @@ const Dashboard: React.FC = () => {
       {
         const netData = weightNetTsRes.data;
         const rawValues = (netData.datasets?.[0]?.data || []) as number[];
-        const formatted = formatTimeLabels(netData.labels);
-        const split = splitNetAtZero(formatted, rawValues);
-        const blue = "rgb(54, 162, 235)";
-        const red = "rgb(255, 99, 132)";
-        const blueFill = "rgba(54, 162, 235, 0.15)";
-        const redFill = "rgba(255, 99, 132, 0.15)";
-        // After zero-split, a segment is positive iff it isn't entirely on/below zero
-        const segmentPositive = (
-          y0: number,
-          y1: number
-        ) => y0 > 0 || y1 > 0 || (y0 === 0 && y1 === 0);
-
-        setWeightNetTs({
-          ...netData,
-          labels: split.labels,
-          datasets: [
-            {
-              ...netData.datasets[0],
-              label: "Buy − Sell (kg)",
-              data: split.values,
-              borderColor: blue,
-              backgroundColor: blueFill,
-              fill: true,
-              tension: 0, // curves would cross zero away from the split point
-              pointRadius: split.isCrossing.map((c) => (c ? 0 : 3)),
-              pointHoverRadius: split.isCrossing.map((c) => (c ? 0 : 4)),
-              pointBackgroundColor: split.values.map((v) =>
-                v >= 0 ? blue : red
-              ),
-              pointBorderColor: split.values.map((v) => (v >= 0 ? blue : red)),
-              segment: {
-                borderColor: (ctx: {
-                  p0: { parsed: { y: number | null } };
-                  p1: { parsed: { y: number | null } };
-                }) => {
-                  const y0 = ctx.p0.parsed.y ?? 0;
-                  const y1 = ctx.p1.parsed.y ?? 0;
-                  return segmentPositive(y0, y1) ? blue : red;
-                },
-                backgroundColor: (ctx: {
-                  p0: { parsed: { y: number | null } };
-                  p1: { parsed: { y: number | null } };
-                }) => {
-                  const y0 = ctx.p0.parsed.y ?? 0;
-                  const y1 = ctx.p1.parsed.y ?? 0;
-                  return segmentPositive(y0, y1) ? blueFill : redFill;
-                },
-              },
-            },
-          ],
-        });
+        setWeightNetTs(
+          buildSignedNetChart(
+            formatTimeLabels(netData.labels),
+            rawValues,
+            "Buy − Sell (kg)"
+          )
+        );
       }
       setTransferDist(transferDistRes.data);
       setBuySellComp({
@@ -189,9 +198,40 @@ const Dashboard: React.FC = () => {
     }
   }, [filters]);
 
+  const fetchCumulativeNet = useCallback(async () => {
+    try {
+      const cumRes = await apiService.charts.weightNetCumulative(
+        filters,
+        sourceDatetime || filters.startDatetime || undefined
+      );
+      const cumData = cumRes.data;
+      const rawValues = (cumData.datasets?.[0]?.data || []) as number[];
+      setWeightNetCumulative(
+        buildSignedNetChart(
+          formatTimeLabels(cumData.labels),
+          rawValues,
+          "Cumulative Buy − Sell (kg)"
+        )
+      );
+      if (!sourceDatetime && cumData.source_datetime) {
+        const apiSource = cumData.source_datetime;
+        const local = apiSource.includes("T")
+          ? apiSource.slice(0, 16)
+          : apiSource.replace(" ", "T").slice(0, 16);
+        setSourceDatetime(local);
+      }
+    } catch (err) {
+      console.error("Error fetching cumulative net:", err);
+    }
+  }, [filters, sourceDatetime]);
+
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
+
+  useEffect(() => {
+    fetchCumulativeNet();
+  }, [fetchCumulativeNet]);
 
   return (
     <div className="dashboard">
@@ -415,6 +455,66 @@ const Dashboard: React.FC = () => {
                     title: {
                       display: true,
                       text: "Buy − Sell (kg)",
+                    },
+                  },
+                },
+              }}
+            />
+          </div>
+        )}
+
+        {weightNetCumulative && (
+          <div className="chart-card large" style={{ paddingBottom: "80px" }}>
+            <div className="chart-header-row">
+              <div>
+                <h2>Cumulative Net from Source</h2>
+                <p className="chart-subtitle">
+                  Running buy − sell (kg) since the selected time · Blue = buy
+                  surplus · Red = sell surplus
+                </p>
+              </div>
+              <div className="chart-source-control">
+                <label htmlFor="source-datetime">Source time</label>
+                <input
+                  id="source-datetime"
+                  type="datetime-local"
+                  value={sourceDatetime}
+                  onChange={(e) => setSourceDatetime(e.target.value)}
+                />
+              </div>
+            </div>
+            <Line
+              data={
+                weightNetCumulative as ChartJSChartData<
+                  "line",
+                  number[],
+                  string
+                >
+              }
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: {
+                    position: "top" as const,
+                  },
+                  tooltip: {
+                    callbacks: {
+                      label: (ctx) => {
+                        const value = ctx.parsed.y ?? 0;
+                        const sign = value > 0 ? "+" : "";
+                        return `${sign}${value.toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })} kg from source`;
+                      },
+                    },
+                  },
+                },
+                scales: {
+                  y: {
+                    title: {
+                      display: true,
+                      text: "Cumulative Buy − Sell (kg)",
                     },
                   },
                 },

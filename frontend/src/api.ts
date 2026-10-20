@@ -122,6 +122,21 @@ export const apiService = {
       return response.data;
     },
 
+    weightNetCumulative: async (
+      filters: Partial<Filters>,
+      sourceDatetime?: string
+    ): Promise<ChartResponse> => {
+      const params = new URLSearchParams();
+      appendFilterParams(params, filters);
+      if (sourceDatetime) {
+        params.append("source_datetime", sourceDatetime);
+      }
+      const response = await api.get<ChartResponse>(
+        `/chart/weight-net-cumulative?${params}`
+      );
+      return response.data;
+    },
+
     transferDistribution: async (
       filters: Partial<Filters>
     ): Promise<ChartResponse> => {

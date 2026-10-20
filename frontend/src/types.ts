@@ -39,6 +39,7 @@ export interface ChartData {
   volume?: number[];
   weight_kg?: number[];
   trade_counts?: number[];
+  source_datetime?: string;
 }
 
 export interface ChartResponse {

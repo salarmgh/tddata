@@ -277,6 +277,39 @@ body {
   margin-bottom: 20px;
 }
 
+.chart-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.chart-header-row .chart-subtitle {
+  margin-bottom: 0;
+}
+
+.chart-source-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.chart-source-control label {
+  font-size: 0.8rem;
+  color: #666;
+  font-weight: 600;
+}
+
+.chart-source-control input[type="datetime-local"] {
+  padding: 8px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
 .chart-card > div:last-child {
   flex: 1;
   position: relative;
